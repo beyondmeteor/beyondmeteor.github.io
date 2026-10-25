@@ -1,0 +1,8 @@
+title: Beyondmeteor | AI Infrastructure & Linux Systems
+description: Bilingual notes on CUDA, LLM inference, Linux and AI Agents.
+lang: en
+markdown: kramdown
+plugins:
+  - jekyll-feed
+exclude:
+  - README.md
