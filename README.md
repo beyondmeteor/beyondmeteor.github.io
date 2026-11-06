@@ -6,6 +6,7 @@ Bilingual technical notes on AI Infrastructure, GPU Computing, LLM inference, Li
 
 ## Published articles / 已发布文章
 
+- [Two Expected Conversions, Yet None Arrive: Poisson Models in Advertising](posts/poisson-distribution-in-advertising.html) — 预期 2 次转化，为什么可能一次都没有？（图解、监控边界与可复现代码）
 - [CUDA Execution Model: Kernel, Grid, Block, Warp & SM](posts/cuda-execution-model.html) — CUDA 执行模型
 - [Why CUDA Graphs Accelerate LLM Inference](posts/why-cuda-graphs-are-fast.html) — CUDA Graph 为什么能够加速推理
 
@@ -29,3 +30,4 @@ Configure GitHub Pages in **Settings → Pages → Build and deployment → Depl
 - Linux Kernel scheduling and realtime voice agents
 
 Existing LICENSE is preserved / 原有 LICENSE 保留不变。
+

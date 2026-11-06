@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="从二项分布到泊松近似：讲清 np=λ、固定均值的极限与实际应用，结合广告点击、转化、跨媒体汇总和 pConv 异常监控，附图与可复现代码。">
+<meta property="og:title" content="预期 2 次转化，为什么可能一次都没有？——泊松分布在广告系统中的用法与边界">
+<meta property="og:description" content="泊松近似不是把数据变成另一种分布。它给平均预测补上波动和尾部概率，但前提必须经得起数据检验。">
+<meta property="og:image" content="https://beyondmeteor.github.io/assets/images/poisson/binomial_poisson_p02_p20.webp">
+<link rel="canonical" href="https://beyondmeteor.github.io/posts/poisson-distribution-in-advertising.html">
+<title>泊松分布在广告系统中的用法与边界 | beyondmeteor</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="../assets/poisson-article.css">
+<script defer src="../assets/site.js"></script>
+</head>
+<body><div class="wrap">
+<header class="nav"><a href="../" class="logo">← ~/beyondmeteor</a><button data-lang-switch type="button">English</button></header>
+<main class="article">
+<div class="meta">Advertising Systems · Probability &amp; Measurement</div>
+<section class="zh">
+<h1>预期 2 次转化，为什么可能一次都没有？</h1>
+<p class="lead">从二项分布到泊松近似，讲清它在广告系统中的用法与边界。</p>
+<p class="reading">2026-11-06 · beyondmeteor · 约 15 分钟 · 所有投放数字均为教学示例，不是线上效果报告。</p>
+<p>一个广告组拿到了 1,000 次点击，模型给出的平均转化概率是 0.2%。预计转化数为 2，实际却是 0。应该怀疑模型、检查埋点，还是再等等？</p>
+<p>如果只看“实际转化数比预期少了 100%”，这看起来很严重。可在一个独立小概率事件模型下，零转化的概率约为 13.5%，并不罕见。要判断这件事，除了平均数，还需要知道结果会怎样波动。</p>
+<div class="callout"><strong>当机会很多、每次发生概率很小时，二项分布可以用主要由平均次数 λ = np 决定的泊松分布近似。它的价值，是方便计算“会发生多少次、波动多大、异常有多罕见”。</strong><br>这里的“近似”不能省略；均值也不能代替对独立性、标签口径和模型误差的检查。</div>
+<nav class="toc" aria-label="文章目录"><strong>阅读路线</strong><ol>
+<li><a href="#zh-binomial">先弄清楚，随机的到底是什么</a></li>
+<li><a href="#zh-limit">为什么保持 np 不变？极限与近似是两回事</a></li>
+<li><a href="#zh-plots">p = 2% 与 p = 20%，差别在哪里</a></li>
+<li><a href="#zh-sum">点击、转化与跨渠道汇总</a></li>
+<li><a href="#zh-monitor">把分布用于 pConv 监控</a></li>
+<li><a href="#zh-evidence">实际边界、论文证据与复现代码</a></li></ol></nav>
+
+<h2 id="zh-binomial">一、单次是伯努利，多次相加才是计数</h2>
+<p>先采用一个明确的口径：每次点击在约定的归因窗口内，最多记一次转化；各次结果独立，转化概率相同，均为 p。令 X<sub>i</sub> 表示第 i 次点击是否转化：转化为 1，否则为 0。这是伯努利随机变量。</p>
+<div class="equation">K = X₁ + X₂ + ⋯ + X<sub>n</sub> ∼ Binomial(n, p)<br>E[K] = np，Var(K) = np(1 − p)</div>
+<p>K 是实际转化数，可能为 0、1、2……；E[K] 是长期重复同类投放时的平均数。在上述假设下，二项分布是精确模型，无论 p 是 0.2%、20% 还是 90%。<a href="#ref-scipy-binom">[1]</a></p>
+<table><thead><tr><th>量</th><th>含义</th><th>例子</th></tr></thead><tbody>
+<tr><td>n</td><td>点击次数</td><td>1,000</td></tr><tr><td>p</td><td>单次转化概率</td><td>0.002</td></tr><tr><td>K</td><td>实际转化数，随机</td><td>0、1、2、3……</td></tr><tr><td>λ := np</td><td>预期转化数，给定参数后确定</td><td>2</td></tr></tbody></table>
+<p>把 np 记作 λ，只是为平均数取一个符号，并没有要求它永远不变。E[K] = 2 也不意味着 K = 2。泊松近似下，恰好 0、1、2 次转化的概率分别约为 13.53%、27.07%、27.07%。</p>
+
+<h2 id="zh-limit">二、为什么会出现泊松公式</h2>
+<p>二项分布中，恰好 k 次成功的概率是：</p>
+<div class="equation">P(K = k) = C(n, k) p<sup>k</sup>(1 − p)<sup>n−k</sup></div>
+<p>C(n,k) 表示从 n 次机会中选出 k 次的方法数。令 p = λ/n，保持 λ 为有限正数，让 n 趋向无穷。对于固定的 k：</p>
+<div class="equation">C(n, k)(λ/n)<sup>k</sup><br>= (λ<sup>k</sup>/k!) × 1 × (1 − 1/n) × ⋯ × (1 − (k−1)/n)<br>→ λ<sup>k</sup>/k!<br><br>(1 − λ/n)<sup>n−k</sup> → e<sup>−λ</sup></div>
+<p>两部分相乘，得到：</p>
+<div class="equation">P(K = k) → e<sup>−λ</sup> λ<sup>k</sup>/k!，即 Poisson(λ)</div>
+<p>这就是泊松概率质量函数。<a href="#ref-scipy-poisson">[2]</a>直观地说：机会越来越多，每次成功越来越难，但平均成功次数保持相同；机会数和单次概率的具体组合对分布的影响逐渐消失。</p>
+
+<h3>“保持 λ 不变”是推导条件，不是投放规律</h3>
+<p>为了得到同一个 Poisson(2)，可以依次考虑 Binomial(100, 0.02)、Binomial(1000, 0.002)、Binomial(10000, 0.0002)。它们都是平均 2 次，但分布越来越接近。严格的极限定理只要求 n p<sub>n</sub> → λ，不要求每一步都恰好相等。</p>
+<p>这并不是说，真实广告的点击次数增加会导致 CVR 下降。真实 CVR 如果固定为 0.2%，点击数增加时，平均数当然增加：</p>
+<table><thead><tr><th>点击数</th><th>CVR</th><th>精确二项模型</th><th>对应泊松近似</th></tr></thead><tbody>
+<tr><td>1,000</td><td>0.2%</td><td>Binomial(1000, 0.002)</td><td>Poisson(2)</td></tr>
+<tr><td>5,000</td><td>0.2%</td><td>Binomial(5000, 0.002)</td><td>Poisson(10)</td></tr>
+<tr><td>10,000</td><td>0.2%</td><td>Binomial(10000, 0.002)</td><td>Poisson(20)</td></tr></tbody></table>
+<p><strong>教材讨论的是“一系列分布趋向同一个固定分布”；工程应用做的是“每组数据分别找一个足够接近的分布”。</strong>固定 p 后，仅增加 n，不能据此断言泊松近似误差趋于零。这也不是要求所有广告组共享同一个 λ。</p>
+<figure><a href="../assets/images/poisson/poisson_clicks_conversions.webp"><img src="../assets/images/poisson/poisson_clicks_conversions.webp" width="2240" height="1600" alt="四幅概率图：低 CVR 的转化数、固定均值下的极限、低 CTR 的点击数，以及高成功概率时的近似误差" loading="lazy"></a><figcaption>图 1｜A：Binomial(1000,0.002) 与 Poisson(2) 几乎重合。B：保持平均数为 2，降低 p，二项分布趋近泊松分布。C：点击数也能有同样的近似。D：p = 50% 时，泊松模型明显夸大波动。图中连线仅辅助阅读，概率仍定义在整数上；点击图片查看原图。</figcaption></figure>
+
+<h2 id="zh-plots">三、为什么 p = 2% 很接近，p = 20% 就差一些</h2>
+<p>泊松近似匹配的是均值 λ = np。它同时规定方差也等于 λ，而二项分布的方差多了一个 (1−p)。因此，p 越小，这个差别通常越小。方差比较能解释图形的宽窄，但单凭方差接近，不能证明整个分布接近。</p>
+<table><thead><tr><th>模型</th><th>均值</th><th>方差</th><th>标准差</th></tr></thead><tbody>
+<tr><td>Binomial(1000,0.02)</td><td>20</td><td>19.6</td><td>4.43</td></tr>
+<tr><td>Poisson(20)</td><td>20</td><td>20</td><td>4.47</td></tr>
+<tr><td>Binomial(1000,0.2)</td><td>200</td><td>160</td><td>12.65</td></tr>
+<tr><td>Poisson(200)</td><td>200</td><td>200</td><td>14.14</td></tr></tbody></table>
+<figure><a href="../assets/images/poisson/binomial_poisson_p02_p20.webp"><img src="../assets/images/poisson/binomial_poisson_p02_p20.webp" width="2520" height="1620" alt="p 为百分之二和百分之二十时，二项分布与泊松分布的对比，含核心解释及尾部概率" loading="lazy"></a><figcaption>图 2｜两组均为 1,000 次机会。p = 2% 时几乎重合；p = 20% 时，泊松曲线更宽。均值相同并不意味着分布相同。</figcaption></figure>
+<p>“近似是否够用”还取决于你要算什么。p = 2% 时，至少 30 次转化的概率，二项模型为 2.070%，泊松模型为 2.182%。p = 20% 时，至少 230 次转化的概率分别为 1.074% 和 2.023%，后者接近前者的两倍。即使整条曲线看上去相似，尾部的相对误差也可能影响告警。</p>
+<p>因此不必把 p = 20% 理解为某条绝对禁用线；应看用途和误差容忍度。现代计算库可以直接算二项概率，已知 n、p 时没有必要强行近似。若 n 很大且 np 与 n(1−p) 都足够大，带连续性修正的正态近似也是选项。</p>
+
+<h2 id="zh-sum">四、点击和转化没有特殊的数学区别</h2>
+<table><thead><tr><th>计数</th><th>一次机会</th><th>单次概率</th><th>小概率时的近似参数</th></tr></thead><tbody>
+<tr><td>点击数</td><td>一次曝光</td><td>CTR</td><td>曝光数 × CTR</td></tr>
+<tr><td>转化数</td><td>一次点击</td><td>点击后 CVR</td><td>点击数 × CVR</td></tr></tbody></table>
+<p>判断能否使用泊松近似的依据是事件生成机制，不是它叫“点击”还是“转化”。例如 10,000 次曝光、CTR 为 1%，点击数可以从 Binomial(10000,0.01) 近似为 Poisson(100)。“稀有”描述单次概率，不要求总事件数很少。</p>
+<p>真实 pConv 模型会为每次点击给出不同的 p<sub>i</sub>。独立但不同概率的二元变量之和，精确地说是泊松二项分布；当各个 p<sub>i</sub> 都很小时，可考虑 Poisson(Σp<sub>i</sub>) 近似。无论是否独立，期望总数始终是 Σp<sub>i</sub>；独立性是进一步描述计数分布时的条件。</p>
+<details><summary>固定次数与固定时间窗口，也要分清</summary><p>若一小时曝光数本身服从 Poisson(μ)，每次曝光又以固定概率 p 独立产生点击，则点击数精确服从 Poisson(μp)。这叫泊松稀疏化，不要求 p 很小。它的前提是曝光计数的泊松模型和独立筛选机制成立，而不是“所有一小时流量都天然服从泊松”。</p></details>
+
+<h3>独立渠道相加，得到的不只是总平均数</h3>
+<p>假设 A、B 两个渠道的计数相互独立，分别服从 Poisson(3)、Poisson(5)，则总数服从 Poisson(8)。可以从卷积直接验证：</p>
+<div class="equation">P(K<sub>A</sub> + K<sub>B</sub> = k)<br>= Σ<sub>j=0…k</sub> [e<sup>−3</sup>3<sup>j</sup>/j!] [e<sup>−5</sup>5<sup>k−j</sup>/(k−j)!]<br>= e<sup>−8</sup>/k! × Σ<sub>j=0…k</sub> C(k,j)3<sup>j</sup>5<sup>k−j</sup><br>= e<sup>−8</sup>8<sup>k</sup>/k!</div>
+<p>最后一步用了二项式定理。如果分渠道模型只是近似，合计结论也只是近似。</p>
+<p><strong>“3 + 5 = 8”本身没有特殊业务价值，期望相加根本不需要泊松分布。</strong>额外收益是合计后的整个分布仍已知，可继续计算目标达成概率和尾部概率。比如三个独立渠道预期分别为 3、5、2，合计 Poisson(10) 下，至少 8 次的概率约为 78.0%，最多 5 次约为 6.7%。</p>
+<p>这可以帮助在广告组、媒体、广告主之间汇总监控。但它不会告诉你“把预算从 A 移到 B 会多出几单”。预算变化可能同时改变流量规模、用户组成和 CVR，因果增量与预算响应需要另行建模。</p>
+
+<h2 id="zh-monitor">五、一个真正具体的用途：同样少了 50%，先查谁</h2>
+<p>考虑两个广告组，标签窗口已经成熟，模型预测也经过历史校准：</p>
+<table><thead><tr><th>广告组</th><th>预期</th><th>实际</th><th>相对偏差</th><th>泊松模型下出现该结果或更低的概率</th></tr></thead><tbody>
+<tr><td>A</td><td>2</td><td>1</td><td>−50%</td><td>P(K ≤ 1 | λ=2) = 40.60%</td></tr>
+<tr><td>B</td><td>20</td><td>10</td><td>−50%</td><td>P(K ≤ 10 | λ=20) = 1.08%</td></tr></tbody></table>
+<p>同一个偏差比例，背后的随机波动意义不同。A 的结果很常见；B 更值得排查。这里的 1.08% 是“在给定模型下，这么低或更低的计数出现的概率”，不是“系统正常的概率”，也不是故障后验概率。</p>
+<p>泊松模型还给出相对标准差 1/√λ：预期只有 4 次时为 50%，预期 100 次时为 10%。这解释了低转化量广告组为什么容易大起大落，也说明统一的百分比告警阈值为什么不够合理。</p>
+<h3>一条可实现的监控链路</h3>
+<ol>
+<li><strong>记录预测。</strong>保存 click_id、媒体、广告组、时间、模型版本和 pConv；模型目标应与后续标签定义一致。</li>
+<li><strong>对齐标签。</strong>使用成熟的点击 cohort 和归因窗口，对订单或事件去重，确认每条样本仍是 0/1 口径。</li>
+<li><strong>分组汇总。</strong>按媒体 × 广告组 × 日期计算预期 λ̂ = Σp<sub>i</sub> 和实际 K = Σy<sub>i</sub>。</li>
+<li><strong>计算下尾概率。</strong>使用 P(X ≤ K | λ̂) 排查转化不足；查转化异常升高时计算上尾，方向应预先定义。</li>
+<li><strong>用历史数据校准。</strong>按流量规模、媒体、时段观察误报率；多分组扫描要控制多重检验，反复随时间查看还要考虑序贯监控。</li>
+</ol>
+<p>这是一种可实施的基线设计，不是本文声称已在某广告平台上线的方案。λ̂ 来自模型，包含校准误差和估计不确定性；直接把它当已知真值计算出的概率，不自动拥有理想检验的误报率。监控系统应先验证这一点，再决定是否告警，更不能仅凭一次小概率自动停投。</p>
+
+<h2 id="zh-evidence">六、跨媒体应用的难点，往往在泊松公式之外</h2>
+<h3>先有统一口径，再谈相加</h3>
+<p>同一个用户先看信息流、再点搜索、最后下一单，两个媒体可能各报一次转化。直接相加得到 2，不代表广告主实际获得了两个订单。要先明确统计的是媒体报表、去重订单，还是归因贡献，并统一身份、事件和时间窗口。</p>
+<p>多触点归因给 A 记 0.3、B 记 0.7，这些是贡献权重，不是整数事件计数，不能直接声明为普通泊松变量。一个点击能带来多次购买时，也已超出前面的二元标签假设，应重新定义计数模型。</p>
+<h3>相关性和预测误差，会让尾部变厚</h3>
+<p>促销、库存变化和网站故障会同时影响不同渠道。同一用户的多次行为也可能相关。总方差应包含协方差：</p>
+<div class="equation">Var(ΣK<sub>j</sub>) = ΣVar(K<sub>j</sub>) + 2Σ<sub>j&lt;l</sub> Cov(K<sub>j</sub>,K<sub>l</sub>)</div>
+<p>此外，即使给定真实强度 Λ 时计数是泊松的，混合不同强度后也有 Var(K) = E[Λ] + Var(Λ)。因此，不同流量条件混在一起、或强度本身不确定，都可能让观察方差大于均值。应先建模可解释的共同因素；若剩余波动仍过大，再评估负二项、分层模型或经验预测区间。不要在不同均值的桶上直接比较原始方差与均值，就断言泊松假设失效。</p>
+<h3>“尚未转化”与“最终不转化”不同</h3>
+<p>不能用今天尚未成熟的回传数，直接对比模型预测的最终转化数。简单基线可以等待窗口成熟；如果要实时监控，就需要对齐截至当前时刻应观察到的数量。例如已建模每次最终转化的延迟 CDF F<sub>i</sub>(a)，则当前可观察转化的期望可写成 Σp<sub>i</sub>F<sub>i</sub>(a<sub>i</sub>)，同时保证延迟定义、截断与标签口径一致。</p>
+<h3>有公开研究证据，但不要推断成线上实现</h3>
+<p>Google 作者在 2024 年发表的 <em>A Time To Event Framework For Multi-touch Attribution</em> 使用非齐次泊松过程描述转化，结合时间变化的广告影响和未完整观察的数据，再分配归因贡献。论文区分了观察相关性与随机实验支持的因果估计。这是泊松方法用于广告归因的研究证据，不是“各媒体独立求和”的生产实现证明。<a href="#ref-tedda">[3]</a></p>
+<p>泊松分布最适合回答的是：在一个明确的平均水平和事件模型下，这样的计数有多常见。模型是否准确、订单算给谁、某个媒体到底带来了多少增量，是另外的工程和因果问题。</p>
+
+<h2>七、用几十行代码验证，不必只相信曲线</h2>
+<p>下列计算可直接复现文中的关键概率。上尾用 <code>sf(k-1)</code> 表示“至少 k 次”，避免把严格大于与大于等于混淆。</p>
+<pre><code>from scipy.stats import binom, poisson
+
+# P(K &gt;= threshold): exact vs approximation
+for p, threshold in [(0.02, 30), (0.2, 230)]:
+    n = 1000
+    print(binom.sf(threshold - 1, n, p),
+          poisson.sf(threshold - 1, n * p))
+
+# Same -50% deviation, different evidence
+print(poisson.cdf(1, 2))    # 0.4060058497
+print(poisson.cdf(10, 20))  # 0.0108117188</code></pre>
+<p><a href="../assets/code/poisson_advertising.py" download>下载完整 Python 复现脚本</a>：输出本文的数值、总变差距离，并可重绘两组分布对比图。两张正文插图来自本次讨论中的计算绘图。代码只使用教学参数，不包含广告账户数据。</p>
+<div class="callout">对工程使用最重要的区分：<strong>期望求和是恒等式，泊松分布是模型假设，异常告警是需要验证的决策规则。</strong>把这三层分开，才知道一次漂亮的数学简化，究竟替业务解决了什么。</div>
+</section>
+
+<section class="en" hidden>
+<h1>Two Expected Conversions, Yet None Arrive</h1>
+<p class="lead">Poisson approximations in advertising: what they explain, where they help, and where the assumptions break.</p>
+<p class="reading">2026-11-06 · beyondmeteor · All campaign numbers are illustrative, not production results.</p>
+<p>A campaign receives 1,000 clicks with a conversion probability of 0.2% per click. Its expected conversion count is two, but the observed count is zero. Is the model broken? Under an independent rare-event model, zero has a probability of about 13.5%. A mean alone cannot tell us how surprising an observation is.</p>
+<div class="callout">With many independent opportunities and a small success probability per opportunity, a binomial count can be approximated by a Poisson distribution with mean λ = np. The benefit is a tractable model of counts, variability, and tail probabilities—not a guarantee that real traffic follows that model.</div>
+
+<h2>1. Start with the exact count model</h2>
+<p>Assume a fixed number of clicks n, at most one conversion per click within a defined attribution window, independent outcomes, and the same conversion probability p. Each click has a Bernoulli label X<sub>i</sub>. Their sum is binomial for any p, including 20% or 90%.</p>
+<div class="equation">K = ΣX<sub>i</sub> ∼ Binomial(n,p)<br>E[K] = np，Var(K) = np(1−p)</div>
+<p>K is random; np is its expected value. Writing λ := np names the mean without requiring it to remain constant. An expected count of two does not mean that two must occur. Under Poisson(2), probabilities of zero, one, and two are approximately 13.53%, 27.07%, and 27.07%. See the exact binomial definition in <a href="#ref-scipy-binom">[1]</a>.</p>
+
+<h2>2. A limiting theorem is not the same as a finite-data approximation</h2>
+<p>The binomial probability mass function is C(n,k)p<sup>k</sup>(1−p)<sup>n−k</sup>. Set p = λ/n and let n grow while λ stays finite and positive. For each fixed k:</p>
+<div class="equation">C(n,k)(λ/n)<sup>k</sup> → λ<sup>k</sup>/k!<br>(1−λ/n)<sup>n−k</sup> → e<sup>−λ</sup><br>P(K=k) → e<sup>−λ</sup>λ<sup>k</sup>/k!</div>
+<p>The last expression defines Poisson(λ).<a href="#ref-scipy-poisson">[2]</a> The theorem constructs a sequence approaching one fixed distribution. For example, Binomial(100,0.02), Binomial(1000,0.002), and Binomial(10000,0.0002) all have mean two and get closer to Poisson(2). More generally, n p<sub>n</sub> only needs to converge to λ.</p>
+<p>This is a mathematical construction, not a claim that adding clicks reduces CVR. If real CVR stays at 0.2%, increasing clicks from 1,000 to 5,000 to 10,000 changes the means from 2 to 10 to 20. We can separately approximate those three binomial distributions by Poisson(2), Poisson(10), and Poisson(20). We are not claiming convergence to the same fixed distribution. Increasing n alone at fixed p does not establish vanishing approximation error.</p>
+<figure><a href="../assets/images/poisson/poisson_clicks_conversions.webp"><img src="../assets/images/poisson/poisson_clicks_conversions.webp" width="2240" height="1600" alt="Four panels comparing conversion counts, the fixed-mean limit, click counts, and approximation failure at a high success probability" loading="lazy"></a><figcaption>Figure 1. A: low-CVR conversions. B: convergence at a fixed mean. C: low-CTR clicks. D: excessive dispersion in the Poisson approximation when p = 50%. Lines are visual guides through discrete probability masses.</figcaption></figure>
+
+<h2>3. What changes between p = 2% and p = 20%?</h2>
+<p>The Poisson model matches the mean np but sets the variance to np, while the binomial variance is np(1−p). For n = 1,000 and p = 2%, standard deviations are 4.43 versus 4.47. At p = 20%, they are 12.65 versus 14.14. Variance explains the width difference, but matching moments alone does not prove distributions are close.</p>
+<figure><a href="../assets/images/poisson/binomial_poisson_p02_p20.webp"><img src="../assets/images/poisson/binomial_poisson_p02_p20.webp" width="2520" height="1620" alt="Blue exact binomial bars and orange Poisson approximation: almost overlapping at p=2%, but wider Poisson tails at p=20%; Chinese explanatory annotations" loading="lazy"></a><figcaption>Figure 2. Both panels use n = 1,000. Blue is the exact binomial model; orange is the Poisson approximation. The Chinese note explains that rare-event counts can be summarized approximately by their expected count, enabling variability and tail calculations.</figcaption></figure>
+<table><thead><tr><th>Case</th><th>Exact binomial tail</th><th>Poisson tail</th></tr></thead><tbody><tr><td>p = 2%, K ≥ 30</td><td>2.070%</td><td>2.182%</td></tr><tr><td>p = 20%, K ≥ 230</td><td>1.074%</td><td>2.023%</td></tr></tbody></table>
+<p>In the second case the tail is almost doubled. “Close enough” depends on the probability being estimated and the allowed error, not a universal cutoff for p. Modern libraries compute exact binomial probabilities efficiently. A normal approximation with continuity correction is another option when both np and n(1−p) are sufficiently large.</p>
+
+<h2>4. Clicks and conversions have the same mathematical structure</h2>
+<p>For clicks, one opportunity is an impression and p is CTR. For conversions, one opportunity is a click and p is post-click CVR. With independent identically distributed binary outcomes, both counts are binomial; both may admit a Poisson approximation. For 10,000 impressions and CTR = 1%, the approximate click distribution is Poisson(100). Rare refers to the per-opportunity probability, not necessarily a small total count.</p>
+<p>When a pConv model outputs different probabilities p<sub>i</sub>, independent binary labels sum to a Poisson-binomial distribution. If individual probabilities are small, Poisson(Σp<sub>i</sub>) can be useful. The expectation Σp<sub>i</sub> is valid even without independence; the distributional approximation requires additional assumptions.</p>
+<p>There is also a different, exact result: if impressions in a time window are Poisson(μ), and each is independently retained as a click with probability p, the click count is Poisson(μp). This thinning property does not require a small p. It requires the original Poisson model and independent retention.</p>
+
+<h2>5. Adding channels adds more than their means—if they are independent</h2>
+<p>If independent counts K<sub>A</sub> and K<sub>B</sub> are Poisson(3) and Poisson(5), their sum is Poisson(8). Convolving the two mass functions gives:</p>
+<div class="equation">P(K<sub>A</sub>+K<sub>B</sub>=k)<br>= e<sup>−8</sup>/k! × Σ<sub>j=0…k</sub>C(k,j)3<sup>j</sup>5<sup>k−j</sup><br>= e<sup>−8</sup>8<sup>k</sup>/k!</div>
+<p>The last step is the binomial theorem. Approximate component models yield an approximate total model. Summing expectations does not need Poisson or independence; preserving the complete Poisson distribution does. Three independent channels with expected counts 3, 5, and 2 give Poisson(10), with P(K ≥ 8) ≈ 78.0% and P(K ≤ 5) ≈ 6.7%.</p>
+<p>This makes count monitoring easy to roll up across ad groups, media, and advertisers. It does not say how reallocating budget changes incremental conversions. Spend changes can alter both traffic volume and composition.</p>
+
+<h2>6. A concrete use: which 50% shortfall deserves investigation?</h2>
+<table><thead><tr><th>Ad group</th><th>Expected</th><th>Observed</th><th>Shortfall</th><th>Poisson lower tail</th></tr></thead><tbody><tr><td>A</td><td>2</td><td>1</td><td>50%</td><td>P(K ≤ 1 | λ=2) = 40.60%</td></tr><tr><td>B</td><td>20</td><td>10</td><td>50%</td><td>P(K ≤ 10 | λ=20) = 1.08%</td></tr></tbody></table>
+<p>Assuming calibrated predictions and mature labels, group A's result is common; B deserves more attention. A lower-tail probability is not a posterior probability of a system fault. It is evidence conditional on the assumed model. Relative standard deviation is 1/√λ, so low-volume groups naturally fluctuate more.</p>
+<p>A practical baseline records click IDs, media, ad groups, timestamps, model versions, and pConv. After labels mature, deduplicate and aggregate expected λ̂ = Σp<sub>i</sub> and observed K = Σy<sub>i</sub> in aligned groups. Compute lower tails for underperformance, then evaluate historical false-alarm rates across volume buckets, media, and time periods. Account for multiple testing and repeated monitoring.</p>
+<p>This is a proposed baseline design, not a verified account of a platform's production system. Estimated λ̂ carries calibration and estimation errors. Plug-in tail probabilities do not automatically achieve nominal false-alarm rates, and should not directly trigger bid cuts or campaign shutdowns.</p>
+
+<h2>7. Where the model breaks</h2>
+<p><strong>Attribution and duplicate events.</strong> A user may see a feed ad, click search, and place one order that both platforms claim. Define whether you count platform-reported conversions, deduplicated orders, or attribution credit. Credits of 0.3 and 0.7 are fractional weights, not ordinary Poisson counts. Multiple purchases per click also require revisiting the binary-label assumption.</p>
+<p><strong>Dependence and varying intensity.</strong> Promotions, inventory, site outages, and shared users can correlate channels. Total variance includes covariance terms. Even if K conditional on a latent intensity Λ is Poisson, its marginal variance is E[Λ] + Var(Λ), allowing more variability than a fixed-mean Poisson model. Condition on known drivers before considering negative-binomial, hierarchical, or empirical predictive models; raw variance across buckets with different means is not a valid standalone dispersion test.</p>
+<p><strong>Delayed feedback.</strong> Today's incomplete reported count cannot be compared directly with final-window expectations. Wait for mature cohorts or model the expected observed count at each age. With an appropriate conversion-delay CDF F<sub>i</sub>(a), a binary-outcome baseline uses Σp<sub>i</sub>F<sub>i</sub>(a<sub>i</sub>), with consistent censoring and attribution definitions.</p>
+<p><strong>Published evidence.</strong> The 2024 paper <em>A Time To Event Framework For Multi-touch Attribution</em>, by Google authors, models conversions with an inhomogeneous Poisson process and time-varying ad effects, handles incomplete observations, and assigns attribution credit. It distinguishes observational association from causal estimates supported by randomization. This documents a research application, not the independent-channel monitoring implementation proposed here.<a href="#ref-tedda">[3]</a></p>
+
+<h2>8. Reproduce the numbers</h2>
+<pre><code>from scipy.stats import binom, poisson
+
+for p, threshold in [(0.02, 30), (0.2, 230)]:
+    n = 1000
+    print(binom.sf(threshold - 1, n, p),
+          poisson.sf(threshold - 1, n * p))
+
+print(poisson.cdf(1, 2))    # 0.4060058497
+print(poisson.cdf(10, 20))  # 0.0108117188</code></pre>
+<p><a href="../assets/code/poisson_advertising.py" download>Download the full reproduction script</a> for numerical results, total-variation distances, and an optional comparison plot. Use <code>sf(k-1)</code> for “at least k”; <code>sf(k)</code> means “strictly greater than k.” The article's figures are computed plots, not simulated campaign results.</p>
+<div class="callout"><strong>Adding expectations is an identity. A Poisson distribution is a modeling assumption. An alert is a decision rule that needs validation.</strong> Keeping those three layers separate makes the engineering value—and its limits—clear.</div>
+</section>
+
+<section class="sources"><h2>参考资料 / References</h2><ol>
+<li id="ref-scipy-binom">SciPy. <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.binom.html">scipy.stats.binom</a> — 二项分布定义与概率计算 / Binomial definition and numerical methods.</li>
+<li id="ref-scipy-poisson">SciPy. <a href="https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.poisson.html">scipy.stats.poisson</a> — 泊松分布定义与概率计算 / Poisson definition and numerical methods.</li>
+<li id="ref-tedda">Shender, D., et al. (2024). <a href="https://jds-online.org/journal/JDS/article/1336/file/pdf">A Time To Event Framework For Multi-touch Attribution</a>. <em>Journal of Data Science</em>, 22(1), 56–76. <a href="https://doi.org/10.6339/23-JDS1101">DOI: 10.6339/23-JDS1101</a>.</li>
+</ol><p class="note">计算复现环境 / Numerical environment: Python, NumPy, SciPy, Matplotlib. Examples are illustrative; no private campaign data is included.</p></section>
+</main><footer class="foot"><a href="../">← Home / 首页</a> · <a href="https://github.com/beyondmeteor/beyondmeteor.github.io/blob/main/posts/poisson-distribution-in-advertising.html">Source / 文章源码</a></footer>
+</div></body></html>
